@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: #APPNAME#
+  namespace: #NAMESPACE#
+  annotations:
+  labels:
+    app: #APPNAME#
+    tier: backend
+    project: nkdev.#APPNAME#
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # how many pods we can add at a time
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: #APPNAME#
+      tier: backend
+      project: nkdev.#APPNAME#
+  template:
+    metadata:
+      labels:
+        app: #APPNAME#
+        tier: backend
+        version: #VERSION#
+        project: nkdev.#APPNAME#
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: tier
+                  operator: In
+                  values:
+                  - frontend
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+      - image: xxxxxxxxxxxx.dkr.ecr.ap-southeast-1.amazonaws.com/nkdev/#APPNAME#:#VERSION#
+        imagePullPolicy: Always
+        name: #APPNAME#
+        env:
+        - name: VERSION
+          value: #VERSION#
+        - name: MY_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: APP_NAME
+          value: #APPNAME#
+        envFrom:
+        - secretRef:
+            name: #APPNAME#
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "0.5"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        livenessProbe:
+          failureThreshold: 2
+          initialDelaySeconds: 45
+          periodSeconds: 15
+          successThreshold: 1
+          timeoutSeconds: 5
+          httpGet: # make an HTTP request
+            port: 8080 # port to use
+            path: /health # endpoint to hit
+            scheme: HTTP
+        readinessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          successThreshold: 1
+          timeoutSeconds: 5
+          httpGet: # make an HTTP request
+            port: 8080 # port to use
+            path: /health # endpoint to hit
+            scheme: HTTP
+      restartPolicy: Always
+      nodeSelector:
+        tier: backend
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: #APPNAME#
+  namespace: #NAMESPACE#
+  labels:
+    app: #APPNAME#
+spec:
+  selector:
+    app: #APPNAME#
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8080
+    targetPort: 8080
+  type: NodePort
+---
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: #APPNAME#
+  namespace: #NAMESPACE#
+  labels:
+    app: #APPNAME#
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: #APPNAME#
+  minReplicas: #MINREPLICAS#
+  maxReplicas: 1
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 80
+  - type: Resource
+    resource:
+      name: memory
+      targetAverageUtilization: 80
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: #APPNAME#
+  namespace: #NAMESPACE#
+  labels:
+    app: #APPNAME#
+  annotations:
+    kubernetes.io/ingress.class: #INGRESS#
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=31536000 ; includeSubDomains";
+      more_set_headers "X-Frame-Options: deny";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_clear_headers Server;
+spec:
+  rules:
+  - host: #HOSTNAME#
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: #APPNAME#
+          servicePort: 8080
